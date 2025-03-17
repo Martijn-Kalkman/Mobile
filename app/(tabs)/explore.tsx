@@ -7,18 +7,24 @@ import {
   StyleSheet,
   Button,
   Alert,
+  RefreshControl,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { fetchMarkersFromSupabase } from "../../utils/supabaseClient"; // Import function
+import {
+  fetchMarkersFromSupabase,
+  subscribeToMarkers,
+} from "../../utils/supabaseClient"; // Import functions
 import * as Location from "expo-location";
 
 const ExploreScreen = () => {
   const [savedLocations, setSavedLocations] = useState([]);
   const [supabaseLocations, setSupabaseLocations] = useState([]);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Load locations from AsyncStorage and Supabase on mount
   useEffect(() => {
-    const loadSavedLocations = async () => {
+    const loadLocations = async () => {
       try {
         // Load locally stored locations
         const locations = await AsyncStorage.getItem("savedLocations");
@@ -34,9 +40,18 @@ const ExploreScreen = () => {
       }
     };
 
-    loadSavedLocations(); // Call the function inside useEffect
+    loadLocations();
+
+    // Subscribe to Supabase real-time updates
+    const unsubscribe = subscribeToMarkers((updatedLocations) => {
+      setSupabaseLocations(updatedLocations); // Update Supabase locations in real-time
+    });
+
+    // Cleanup the subscription when the component unmounts
+    return () => unsubscribe();
   }, []);
 
+  // Request and watch the current location of the user
   useEffect(() => {
     const getLocation = async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
@@ -59,6 +74,7 @@ const ExploreScreen = () => {
     getLocation();
   }, []);
 
+  // Clear AsyncStorage and fetch data from Supabase again
   const clearAsyncStorage = async () => {
     try {
       await AsyncStorage.clear();
@@ -66,7 +82,7 @@ const ExploreScreen = () => {
       console.log("AsyncStorage cache cleared!");
       Alert.alert("Success", "Cache has been cleared!");
 
-      // Ensure Supabase data is still fetched
+      // Fetch updated data from Supabase
       const supabaseLocations = await fetchMarkersFromSupabase();
       setSupabaseLocations(supabaseLocations);
     } catch (error) {
@@ -75,6 +91,7 @@ const ExploreScreen = () => {
     }
   };
 
+  // Calculate the distance between two locations in meters
   const getDistance = (loc1, loc2) => {
     const toRad = (angle) => (angle * Math.PI) / 180;
     const R = 6371e3; // Earth radius in meters
@@ -90,6 +107,7 @@ const ExploreScreen = () => {
     return R * c; // Returns distance in meters
   };
 
+  // Check if the current location is near a marker
   const isNear = (marker) => {
     if (!currentLocation) return false;
     const distance = getDistance(
@@ -100,6 +118,26 @@ const ExploreScreen = () => {
       marker
     );
     return distance < 100; // 100 meters threshold for being near the marker
+  };
+
+  // Handle refresh logic
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+
+    // Reload the data from Supabase and AsyncStorage
+    try {
+      const locations = await AsyncStorage.getItem("savedLocations");
+      if (locations) {
+        setSavedLocations(JSON.parse(locations));
+      }
+
+      const supabaseLocations = await fetchMarkersFromSupabase();
+      setSupabaseLocations(supabaseLocations);
+    } catch (error) {
+      console.error("Error refreshing locations:", error);
+    }
+
+    setIsRefreshing(false);
   };
 
   return (
@@ -124,6 +162,9 @@ const ExploreScreen = () => {
             </TouchableOpacity>
           );
         }}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+        }
       />
     </View>
   );
